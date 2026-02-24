@@ -1,4 +1,4 @@
-# Title
+# Calibrated Perplexity for Robust AI-Generated Text Detection Across Languages and Genres
 
 <!-- Change `kisnikser/m1p-template` to `intsystems/your-repository`-->
 [![License](https://badgen.net/github/license/kisnikser/m1p-template?color=green)](https://github.com/kisnikser/m1p-template/blob/main/LICENSE)
@@ -9,15 +9,15 @@
 <table>
     <tr>
         <td align="left"> <b> Author </b> </td>
-        <td> Name Surname </td>
+        <td> Vladimir Chaikin </td>
     </tr>
     <tr>
         <td align="left"> <b> Consultant </b> </td>
-        <td> Name Surname, PhD/DSc </td>
+        <td> German Gritsai </td>
     </tr>
     <tr>
         <td align="left"> <b> Advisor </b> </td>
-        <td> Name Surname, PhD/DSc </td>
+        <td> Andriy Grabovoy, PhD </td>
     </tr>
 </table>
 
@@ -30,7 +30,7 @@
 
 ## Abstract
 
-TODO
+This paper invistigates the problem of robust AI-generated text detection under distribution shift. While simple perplexity is a simple solution for such detection, its oppurtunities lose significantly on out-of-domain data. We propose a novel method - calibrated perplexity - which normalizes raw perplexity scores using domain-specific language model baselines. This approach constructs a stable feature space less sensitive to text length, genre, and language variations. Experiments across multiple domains and languages are going to demonstrate improved in-domain and out-of-domain detection accuracy compared to standard perplexity-based methods.
 
 ## Citation
 
