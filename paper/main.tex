@@ -90,7 +90,54 @@ Language modeling
 
 \section{Introduction}\label{sec:intro}
 
-TODO
+Fast improvement and widespread accessibility of Large Language Models (LLMs) have destroyed the lines between human-written and machine-generated text. While this technology offers benefits, it also presents significant disadvantages, including academic dishonesty, disinformation, and the fall of trust in digital content [xu2024detecting]https://doi.org/10.1609/aaai.v38i21.30361, [hans2024spotting]https://github.com/ahans30/Binoculars. This has created an inevitable need for robust methods to detect AI-generated content.
+
+Current detectors often rely on fine-tuned classifiers or statistical signatures taken from the text [gehrmann2019gltr]https://arxiv.org/abs/1906.04043. Useful and computationally efficient feature is perplexity, a measure of how "surprising" a text is to a language model. The assumption is that LLMs, which are trained to maximize likelihood, will generate text with lower perplexity compared to human writing. As it is shown, a significant change comes from distribution shift. The perplexity of a text is not an absolute value; it is highly dependent on the domain (e.g., news, scientific articles, social media) and language it was trained on. A model fine-tuned for one genre often fails on another, causing unreliable detection in real world, where the target domain is unknown [bakhteev2022automatic]https://ieeexplore.ieee.org/abstract/document/9983964.
+
+Recent works have attempted to solve this by developing zero-shot detectors that are more robust to unseen prompts or models. For instance, Binoculars [hans2024spotting]https://github.com/ahans30/Binoculars uses a ratio of scores from two different LLMs for calibration. Similarly, research on multilingual and cross-domain detection highlights the necessity of adapting methods to diverse data distributions [gritsay2023artificially]https://doi.org/10.1134/S1064562423701211. Despite these advances, a method for calibrating perplexity itself to make it robust across different genres and languages remains still not-explored.
+
+In this paper, we face the challenge of domain shift in AI-generated text detection. We propose a novel method called calibrated perplexity, which normalizes perplexity scores against domain-specific baselines. Our approach includeses training KenLM n-gram models on text from multiple domains and using these models to compute a relative, rather than absolute, measure of text predictability. The core novelty of our work lies in transforming a domain-dependent score into a stable feature for classification. To check our method, we conduct experiments across multiple domains and languages, comparing in-domain and out-of-domain detection.
+
+
+\section{Problem statement}
+
+Let $\mathbf{W}$ be our alphabet, tokens consists from characters from that alphabet.
+
+Let $$\mathbb{D} = \Bigl\{\Big[t_j\Big]_{j=1}^n \Hquad|\Hquad t_j \in \mathbf{W}, n \in \mathbb{N}\Bigr\}$$ be the space of our documents.
+
+We have a set of $N$ documents
+$$\mathbf{D} = \bigcup_{i=1}^{N}D^i, D^i \in \mathbb{D}$$
+
+%Each document  $D^i$ consists of $d_i$ tokens $t_1^i, t_2^i, ..., t_{d_i}^i$, where $t_j^i \in \mathbf{W}$ .
+We have $K$ classes of our text-generative models, that generated fragments of text in $\mathbf{D}$.
+
+We have $K + 1$ labels, that we use for multiclass classification, where $0$ is the label of human-written fragment, $\{1...K\}$ are the  labels that represent corresponding language model, let $\mathbf{C}$ be our set of labels.
+
+Our model $\mathbf{\phi}$ is a superposition of two mappings, $\mathbf{f}$ and $\mathbf{g}$. Mapping $\mathbf{f}$ is responsible for text segmentation. Mapping $\mathbf{g}$ is responsible for classifying obtained fragments.
+
+$$\mathbf{\phi} : \mathbf{g} \circ \mathbf{f},$$
+
+
+$$\mathbf{\phi}: \mathbb{D} \rightarrow \mathbb{T}, \qquad \mathbb{T} = \Bigl\{\Big[t_{s_j}, t_{f_j}, C_j\Big]_{j = 1}^{J} \Hquad|\Hquad t_{s_j} = t_{f_{j - 1}},\Hquad s_j \in \mathbb{N}_0,\Hquad f_j \in \mathbb{N}, \Hquad C_j \in \mathbf{C}\Bigr\},$$
+
+where $J$ is a number of fragments in segmentation of the document, $t_{s_j}$ is starting index of the $j$-th fragment,  $t_{f_j}$ is finishing index of the $j$-th fragment,  $C_{j}$ is class of the $j$-th fragment.
+
+
+To estimate the statistical properties of text fragments, we use a character-aware n-gram language model, KenLM \cite{chen1996empirical}. Let a fragment of text be represented as a sequence of tokens $[t_a, t_{a+1}, ..., t_b]$, where $t_i \in \mathbf{W}$. KenLM provides a function $\mathcal{K}$ that computes the log-probability of this sequence under an n-gram model trained on a specific corpus.
+
+Formally, we define a language model $\mathcal{M}_{\mathcal{T}}$ trained on a text corpus $\mathcal{T} \subset \mathbb{D}$. For a given text fragment $F = [t_{a}, ..., t_{b}]$, the model estimates its probability as the product of conditional probabilities of each token given its $n-1$ predecessors:
+\begin{equation}
+    P_{\mathcal{M}_{\mathcal{T}}}(F) = \prod_{i=a}^{b} P_{\mathcal{M}_{\mathcal{T}}}(t_i \mid t_{i-1}, ..., t_{i-n+1}).
+\end{equation}
+KenLM efficiently implements this estimation using modified Kneser-Ney smoothing, which is particularly effective for handling sparse n-gram occurrences.
+
+The **perplexity** of a fragment $F$ is then defined as the inverse geometric mean of the token probabilities:
+\begin{equation}
+    \text{PPL}_{\mathcal{M}_{\mathcal{T}}}(F) = P_{\mathcal{M}_{\mathcal{T}}}(F)^{-\frac{1}{|F|}} = 2^{-\frac{1}{|F|}\log_2 P_{\mathcal{M}_{\mathcal{T}}}(F)},
+\end{equation}
+where $|F| = b-a+1$ is the length of the fragment.
+
+This metric quantifies how "surprising" the fragment is to the model $\mathcal{M}_{\mathcal{T}}$; lower perplexity indicates that the fragment is more predictable based on the training corpus $\mathcal{T}$. In our work, we train multiple KenLM models $\{\mathcal{M}_{\mathcal{T}_d}\}$ on different domains $\mathcal{T}_d$ (e.g., news, science, social media). For a given fragment $F$, we compute a set of raw perplexities $\{\text{PPL}_{\mathcal{M}_{\mathcal{T}_d}}(F)\}$. The subsequent mapping $\mathbf{g}$ then uses these values, along with the segmentation information from $\mathbf{f}$, to perform the final classification.
 
 \textbf{Contributions.} Our contributions can be summarized as follows:
 \begin{itemize}
