@@ -1,8 +1,5 @@
 \documentclass{article}
 
-\PassOptionsToPackage{numbers, sort, compress}{natbib}
-\usepackage[main,final]{neurips_2025}
-
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{hyperref}
@@ -57,12 +54,12 @@
 
 
 \author{
-  Name Surname\\
+  Vladimir Chaikin\\
   MIPT\\
   Moscow, Russia\\
   \texttt{email@phystech.edu}\\
   \And
-  Name Surname\\
+  Anastasia Voznyuk\\
   MIPT\\
   Moscow, Russia\\
   \texttt{email@phystech.edu}\\
@@ -77,6 +74,373 @@
 \begin{abstract}
     This paper invistigates the problem of robust AI-generated text detection under distribution shift. While simple perplexity is a simple solution for such detection, its oppurtunities lose significantly on out-of-domain data. We propose a novel method - calibrated perplexity - which normalizes raw perplexity scores using domain-specific language model baselines. This approach constructs a stable feature space less sensitive to text length, genre, and language variations. Experiments across multiple domains and languages are going to demonstrate improved in-domain and out-of-domain detection accuracy compared to standard perplexity-based methods.
 \end{abstract}
+
+\textbf{Keywords:} Calibrated perplexity
+Cross-domain detection
+Robustness
+Machine-generated text
+Text classification
+Multilingual detection
+Genre adaptation
+Statistical methods
+Language modeling
+
+\section{Introduction}\label{sec:intro}
+
+Fast improvement and widespread accessibility of Large Language Models (LLMs) have destroyed the lines between human-written and machine-generated text. While this technology offers benefits, it also presents significant disadvantages, including academic dishonesty, disinformation, and the fall of trust in digital content \cite{xu2024detecting, hans2024spotting}. This has created an inevitable need for robust methods to detect AI-generated content.
+
+Current detectors often rely on fine-tuned classifiers or statistical signatures taken from the text \cite{gehrmann2019gltr}. Useful and computationally efficient feature is perplexity, a measure of how "surprising" a text is to a language model. The assumption is that LLMs, which are trained to maximize likelihood, will generate text with lower perplexity compared to human writing. As it is shown in \cite{bakhteev2022automatic}, a significant change comes from distribution shift. The perplexity of a text is not an absolute value; it is highly dependent on the domain (e.g., news, scientific articles, social media) and language it was trained on. A model fine-tuned for one genre often fails on another, causing unreliable detection in real world, where the target domain is unknown.
+
+Recent works have attempted to solve this by developing zero-shot detectors that are more robust to unseen prompts or models. For instance, Binoculars \cite{hans2024spotting} uses a ratio of scores from two different LLMs for calibration. Similarly, research on multilingual and cross-domain detection highlights the necessity of adapting methods to diverse data distributions \cite{gritsay2023artificially}. Despite these advances, a method for calibrating perplexity for each domain itself to make it robust across different genres and languages remains still not-explored.
+
+In this paper, we face the challenge of domain shift and try to avoid its effect on detection. We propose a novel method called calibrated perplexity, which normalizes perplexity scores against domain-specific baselines. The final goal is not to find out one universal calibrated perplexity score, but to get a set of parameters to have an opportunity to learn fastly new zero-shot models. Our approach includeses training KenLM n-gram models on text from multiple domains and using these models to compute a relative, rather than absolute, measure of text predictability. The core novelty of our work lies in transforming a domain-dependent score into a stable feature for classification. To check our method, we conduct experiments across multiple domains and languages, comparing in-domain and out-of-domain detection.
+
+
+\section{Problem statement}
+
+Let $\mathbf{W}$ be our alphabet, tokens consists from characters from that alphabet.
+
+Let $$\mathbb{D} = \Bigl\{\Big[t_j\Big]_{j=1}^n \Hquad|\Hquad t_j \in \mathbf{W}, n \in \mathbb{N}\Bigr\}$$ be the space of our documents.
+
+We have a set of $N$ documents
+$$\mathbf{D} = \bigcup_{i=1}^{N}D^i, D^i \in \mathbb{D}$$
+
+%Each document  $D^i$ consists of $d_i$ tokens $t_1^i, t_2^i, ..., t_{d_i}^i$, where $t_j^i \in \mathbf{W}$ .
+We have $K$ classes of our text-generative models, that generated fragments of text in $\mathbf{D}$.
+
+We have $K + 1$ labels, that we use for multiclass classification, where $0$ is the label of human-written fragment, $\{1...K\}$ are the  labels that represent corresponding language model, let $\mathbf{C}$ be our set of labels.
+
+Our model $\mathbf{\phi}$ is a superposition of two mappings, $\mathbf{f}$ and $\mathbf{g}$. Mapping $\mathbf{f}$ is responsible for text segmentation. Mapping $\mathbf{g}$ is responsible for classifying obtained fragments.
+
+$$\mathbf{\phi} : \mathbf{g} \circ \mathbf{f},$$
+
+
+$$\mathbf{\phi}: \mathbb{D} \rightarrow \mathbb{T}, \qquad \mathbb{T} = \Bigl\{\Big[t_{s_j}, t_{f_j}, C_j\Big]_{j = 1}^{J} \Hquad|\Hquad t_{s_j} = t_{f_{j - 1}},\Hquad s_j \in \mathbb{N}_0,\Hquad f_j \in \mathbb{N}, \Hquad C_j \in \mathbf{C}\Bigr\},$$
+
+where $J$ is a number of fragments in segmentation of the document, $t_{s_j}$ is starting index of the $j$-th fragment,  $t_{f_j}$ is finishing index of the $j$-th fragment,  $C_{j}$ is class of the $j$-th fragment.
+
+
+To estimate the statistical properties of text fragments, we use a character-aware n-gram language model, KenLM \cite{chen1996empirical}. Let a fragment of text be represented as a sequence of tokens $[t_a, t_{a+1}, ..., t_b]$, where $t_i \in \mathbf{W}$. KenLM provides a function $\mathcal{K}$ that computes the log-probability of this sequence under an n-gram model trained on a specific corpus.
+
+Formally, we define a language model $\mathcal{M}_{\mathcal{T}}$ trained on a text corpus $\mathcal{T} \subset \mathbb{D}$. For a given text fragment $F = [t_{a}, ..., t_{b}]$, the model estimates its probability as the product of conditional probabilities of each token given its $n-1$ predecessors:
+\begin{equation}
+    P_{\mathcal{M}_{\mathcal{T}}}(F) = \prod_{i=a}^{b} P_{\mathcal{M}_{\mathcal{T}}}(t_i \mid t_{i-1}, ..., t_{i-n+1}).
+\end{equation}
+KenLM efficiently implements this estimation using modified Kneser-Ney smoothing, which is particularly effective for handling sparse n-gram occurrences.
+
+The **perplexity** of a fragment $F$ is then defined as the inverse geometric mean of the token probabilities:
+\begin{equation}
+    \text{PPL}_{\mathcal{M}_{\mathcal{T}}}(F) = P_{\mathcal{M}_{\mathcal{T}}}(F)^{-\frac{1}{|F|}} = 2^{-\frac{1}{|F|}\log_2 P_{\mathcal{M}_{\mathcal{T}}}(F)},
+\end{equation}
+where $|F| = b-a+1$ is the length of the fragment.
+
+This metric quantifies how "surprising" the fragment is to the model $\mathcal{M}_{\mathcal{T}}$; lower perplexity indicates that the fragment is more predictable based on the training corpus $\mathcal{T}$. In our work, we train multiple KenLM models $\{\mathcal{M}_{\mathcal{T}_d}\}$ on different domains $\mathcal{T}_d$ (e.g., news, science, social media). For a given fragment $F$, we compute a set of raw perplexities $\{\text{PPL}_{\mathcal{M}_{\mathcal{T}_d}}(F)\}$. The subsequent mapping $\mathbf{g}$ then uses these values, along with the segmentation information from $\mathbf{f}$, to perform the final classification.
+
+\textbf{Contributions.} Our contributions can be summarized as follows:
+\begin{itemize}
+    \item We present...
+    \item We demonstrate the validity of our theoretical results through empirical studies...
+    \item We highlight the implications of our findings for...
+\end{itemize}
+
+\textbf{Outline.} The rest of the paper is organized as follows...
+
+\section{Related Work}\label{sec:rw}
+
+\textbf{Topic \#1.}
+TODO
+
+\textbf{Topic \#2.}
+TODO
+
+\section{Preliminaries}\label{sec:prelim}
+
+\subsection{General notation}
+
+In this section, we introduce the general notation used in the rest of the paper and the basic assumptions. 
+
+\subsection{Assumptions} 
+
+TODO
+
+\section{Method}\label{sec:method}
+
+\section{Experiments}\label{sec:exp}
+
+\subsubsection{Experiment Planning}
+
+\paragraph{Goal of the Computational Experiment}
+
+The goal of the computational experiment is to evaluate the effectiveness of \textit{perplexity-based detection} of AI-generated text using a KenLM language model trained on a balanced dataset of human and machine-generated texts. We try to assess the detection performance on an in-domain test set and to compare different threshold selection strategies (accuracy, F1-score, and ROC-AUC) for the binary classifier.
+
+\paragraph{Data Description}
+
+We use the \textbf{AINL dataset} (\texttt{train-kenlm.csv} and \texttt{dev\_full.csv}), an open-access collection of Russian-language texts with annotations indicating whether a text is human-written or generated by a language model.
+
+\textbf{Data statistics:}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|c|c|c|}
+\hline
+\textbf{Split} & \textbf{Source} & \textbf{Human Texts} & \textbf{Machine Texts (llama-3.3-70b)} & \textbf{Total} \\
+\hline
+Train & train-kenlm.csv & 8,769 & 8,700 & 35,158 \\
+Validation & dev\_full.csv & $\sim$1,100 & $\sim$1,100 & $\sim$2,200 \\
+Test & dev\_full.csv & $\sim$1,100 & $\sim$1,100 & $\sim$2,200 \\
+\hline
+\end{tabular}
+\caption{Data statistics by split.}
+\end{table}
+
+\textbf{Data description:}
+\begin{itemize}
+    \item Texts are in Russian language
+    \item Human texts are labeled as `abstract'
+    \item Machine texts are labeled with the model name (`llama-3.3-70b')
+    \item All texts are preprocessed: filtering empty and short texts ($<100$ characters)
+\end{itemize}
+
+\paragraph{Algorithm Configuration}
+
+The base algorithm is \textbf{KenLM}, an n-gram language model with Kneser-Ney smoothing. We train a trigram model ($\text{order}=3$) on the training data. For classification, we use a simple threshold-based detector: a text is classified as machine-generated if its perplexity is below a threshold.
+
+\textbf{Key parameters:}
+\begin{itemize}
+    \item Model order: 3
+    \item Smoothing: Kneser-Ney
+    \item Threshold selection: optimal value on validation set
+\end{itemize}
+
+\paragraph{Experimental Plan}
+
+\begin{enumerate}
+    \item \textbf{Data splitting:}
+    \begin{itemize}
+        \item Train: all human + all llama-3.3-70b texts from \texttt{train-kenlm.csv}
+        \item Validation: 50\% of human + 50\% of llama-3.3-70b from \texttt{dev\_full.csv}
+        \item Test: remaining 50\% of human + 50\% of llama-3.3-70b from \texttt{dev\_full.csv}
+    \end{itemize}
+    
+    \item \textbf{Model training:}
+    \begin{itemize}
+        \item Train KenLM on \texttt{train\_texts.txt} (human + llama texts)
+        \item Compute perplexity for all texts
+    \end{itemize}
+    
+    \item \textbf{Threshold selection (on validation set):}
+    \begin{itemize}
+        \item Find optimal threshold maximizing Accuracy
+        \item Find optimal threshold maximizing F1-score
+        \item Find optimal threshold by ROC-AUC
+    \end{itemize}
+    
+    \item \textbf{Evaluation (on test set):}
+    \begin{itemize}
+        \item Apply each threshold to test data
+        \item Compute Accuracy, F1-score, ROC-AUC
+        \item Compare different threshold strategies
+    \end{itemize}
+    
+    \item \textbf{Analysis:}
+    \begin{itemize}
+        \item Compare validation vs test performance
+        \item Analyze distribution of perplexity for human and machine texts
+    \end{itemize}
+\end{enumerate}
+
+\paragraph{Expected Tables and Figures}
+
+\textbf{Short list:}
+\begin{enumerate}
+    \item Table: Optimal thresholds per metric (Accuracy, F1, ROC-AUC)
+    \item Figure: Distribution of perplexity (human vs machine) on test set
+\end{enumerate}
+
+\textbf{Long list:}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Figure/Table} & \textbf{Description} \\
+\hline
+Fig. 1 & Accuracy vs threshold curve (X: threshold, Y: accuracy) \\
+Fig. 2 & F1-score vs threshold curve (X: threshold, Y: F1) \\
+Fig. 3 & Distribution of perplexity with F1-optimal threshold (histogram, human/machine) \\
+Fig. 4 & Test set perplexity distributions (histogram, density) \\
+Fig. 5 & Test set boxplot (human vs machine) \\
+Fig. 6 & ROC curve on test set (X: FPR, Y: TPR) \\
+Fig. 7 & Confusion matrix (heatmap) \\
+Fig. 8 & Bar chart: validation vs test metrics comparison (F1, Accuracy, ROC-AUC) \\
+Fig. 9 & Bar chart: prediction distribution by class \\
+Table 1 & Data statistics (splits, counts) \\
+Table 2 & Optimal thresholds on validation (F1, Accuracy, Youden) \\
+Table 3 & Test results with F1-optimized threshold (Accuracy, F1, ROC-AUC) \\
+Table 4 & Comparison: validation vs test metrics (F1, Accuracy, ROC-AUC) \\
+\hline
+\end{tabular}
+\caption{Expected tables and figures.}
+\end{table}
+
+\subsubsection{R: Preliminary Report}
+
+\paragraph{Perplexity Statistics}
+
+The perplexity values for validation data show clear separation between classes:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Class} & \textbf{Mean Perplexity} \\
+\hline
+Human & 10.97 \\
+Machine (llama-3.3-70b) & 5.98 \\
+\hline
+\end{tabular}
+\caption{Perplexity statistics on validation set.}
+\end{table}
+
+\paragraph{Threshold Selection}
+
+The optimal threshold maximizing F1-score on validation is:
+
+\[
+\text{threshold}_{\text{F1}} = 7.94
+\]
+
+At this threshold, validation metrics are:
+\begin{itemize}
+    \item Accuracy: 0.8776
+    \item F1-score: 0.8811
+    \item ROC-AUC: 0.9298
+\end{itemize}
+
+\paragraph{Test Results}
+
+Applying the F1-optimized threshold to the test set yields:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Metric} & \textbf{Value} \\
+\hline
+Accuracy & 0.8640 \\
+F1-score & 0.8685 \\
+ROC-AUC & 0.9306 \\
+\hline
+\end{tabular}
+\caption{Test set results with F1-optimized threshold.}
+\end{table}
+
+\paragraph{Validation vs Test Comparison}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Metric} & \textbf{Validation} & \textbf{Test} & \textbf{Difference} \\
+\hline
+F1-score & 0.8811 & 0.8685 & -0.0126 \\
+Accuracy & 0.8776 & 0.8640 & -0.0136 \\
+ROC-AUC & 0.9298 & 0.9306 & +0.0008 \\
+\hline
+\end{tabular}
+\caption{Comparison of validation and test metrics.}
+\end{table}
+
+The small difference between validation and test metrics confirms the stability of the model and the representativeness of the data split.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+ & \textbf{Predicted Human} & \textbf{Predicted Machine} \\
+\hline
+\textbf{Actual Human} & 930 & 167 \\
+\textbf{Actual Machine} & 135 & 967 \\
+\hline
+\end{tabular}
+\caption{Confusion matrix for test set (F1-optimized threshold).}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{paper_pic1.png}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{paper_pic2.png}
+\end{figure}
+
+\paragraph{Interpretation}
+
+The experimental results demonstrate that:
+\begin{enumerate}
+    \item Perplexity effectively separates human-written and machine-generated texts (validation AUC = 0.93).
+    \item The F1-optimized threshold (79.4) provides balanced classification performance.
+    \item Test set metrics closely match validation metrics (F1 difference = -0.0126), confirming model stability.
+\end{enumerate}
+
+\subsubsection{B: Basic Code}
+
+The basic algorithm implementation is available in the notebook \texttt{exp1.ipynb} in the repository. The key steps include:
+
+\begin{enumerate}
+    \item KenLM installation and compilation
+    \item Data loading from \texttt{train-kenlm.csv} and \texttt{dev\_full.csv}
+    \item Perplexity calculation for each text
+    \item Threshold optimization on validation set (by F1-score)
+    \item Evaluation on test set
+\end{enumerate}
+
+\textbf{Key code sections:}
+\begin{itemize}
+    \item \texttt{get\_perplexity()}: computes perplexity for a single text
+    \item Threshold search loops over possible values
+    \item Metrics calculation using \texttt{sklearn}
+\end{itemize}
+
+The code is modular and reproducible. The basic model (trigram KenLM with Kneser-Ney smoothing) runs efficiently on CPU, processing approximately 1000 texts per minute.
+
+\vspace{0.5cm}
+\noindent\textbf{Repository structure:}
+\begin{verbatim}
+experiments/
+    exp1.ipynb          # main notebook with experiments
+    train-kenlm.csv     # training data
+    dev_full.csv        # validation and test data
+\end{verbatim}
+
+
+\section{Discussion}\label{sec:disc}
+
+TODO
+
+\section{Conclusion}\label{sec:concl}
+
+TODO
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\appendix
+\section{Appendix / supplemental material}\label{app}
+
+\subsection{Additional experiments / Proofs of Theorems}\label{app:exp}
+
+TODO
+
+\end{document}\end{abstract}
 
 \textbf{Keywords:} Calibrated perplexity
 Cross-domain detection
